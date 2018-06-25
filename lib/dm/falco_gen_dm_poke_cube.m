@@ -117,7 +117,7 @@ dm.Ndm = ceil_even( max(abs([sqrt(2)*cosd(45-dm.zrot),sqrt(2)*sind(45-dm.zrot)])
 
 
 
-%--Compute list of initial actuator center coordinates (in actutor widths).
+%--Compute list of initial actuator center coordinates (in actuator widths).
 if(dm.flag_hex_array) %--Hexagonal, hex-packed grid
     Nrings = dm.Nrings;
     x_vec = [];
@@ -148,7 +148,9 @@ end
 dm.NactTotal = length(x_vec); %--Total number of actuators in the 2-D array
 
 
-
+%--Rotate the individual actuator the same way that PROPER does it (refer
+%to prop_dm.m to see how these equations are applied there to the entire DM
+%surface array).
 tlt  = zeros(1, 3);
 tlt(1) = dm.xtilt;
 tlt(2) = dm.ytilt;
@@ -204,6 +206,8 @@ for ii=1:numel(Xs0)
     xsNew(ii) = xyzValsRot(1);
     ysNew(ii) = xyzValsRot(2);
 end
+
+
 
 % Calculate the interpolated DM grid (set extrapolated values to 0.0)
 dm.infMaster = griddata(xsNew,ysNew,inf0pad,Xs0,Ys0,'cubic');%,'cubic',0);
