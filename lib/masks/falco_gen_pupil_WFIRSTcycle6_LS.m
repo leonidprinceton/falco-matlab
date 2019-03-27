@@ -11,6 +11,7 @@
 % a Visio file from Kent Wallace of the March 2, 2016 Cycle 6 WFIRST pupil.
 % The pupil used is on-axis.
 %
+% Corrected on 2018-08-16 by A.J. Riggs to compute 'beam_diam_fraction' correctly.
 % Modified by A.J. Riggs on 2017-02-09 to be a function with specifyable
 %   amounts of magnification, clocking, and translation. 
 %   Now keeping the pupil edges non-binary.
@@ -22,7 +23,7 @@
 % inputs.Nbeam: number of points across the incoming beam 
 % inputs.ID: inner diameter of mask (in pupil diameters)
 % inputs.OD: outer diameter of mask (in pupil diameters)
-% inputs.strut_width: width of the struts (in pupil diameters)
+% inputs.wStrut: width of the struts (in pupil diameters)
 % inputs.centering: centering of the pupil on the array ('pixel' or 'interpixel')
 %
 %--To allow magnification, clocking, and translation:
@@ -32,18 +33,6 @@
 % Strut width also needs to scale with magnification
 
 function mask = falco_gen_pupil_WFIRSTcycle6_LS(inputs,varargin)
-
-
-% % %--DEBUGGING ONLY: HARD-CODED INPUTS
-% clear
-% inputs.Dbeam = 48e-3; % meters;
-% inputs.Nbeam = 48;
-% inputs.ID = 0.40;
-% inputs.OD = 0.80;
-% inputs.strut_width = 0.04;
-% inputs.centering = 'pixel';
-% addpath ~/Repos/FALCO/proper_v3.0.1_matlab_22aug17/
-
 
 % Set default values of input parameters
 flagRot180deg = false;
@@ -60,15 +49,27 @@ while icav < size(varargin, 2)
     end
 end
 
+
+% %--DEBUGGING ONLY: HARD-CODED INPUTS
+% clear all
+% addpath ~/Repos/FALCO/lib/PROPER/
+% inputs.Dbeam = 46.3e-3; % meters;
+% inputs.Nbeam = 124;
+% inputs.ID = 0.40;
+% inputs.OD = 0.80;
+% inputs.wStrut = 0.04;
+% inputs.centering = 'pixel';
+% flagRot180deg = false;
+% %--------------------------------------
+
+
 Dbeam = inputs.Dbeam; %--diameter of the beam at the mask (meters)
-% dx = inputs.dx; %--width of a pixel in the mask representation (meters)
 Nbeam   = inputs.Nbeam;     % number of points across the incoming beam           
-% Narray = inputs.Narray;   % number of points across output array
 ID = inputs.ID; % inner diameter of mask (in pupil diameters)
 OD = inputs.OD; % outer diameter of mask (in pupil diameters)
-strut_width = inputs.strut_width; % width of the struts (in pupil diameters)
+wStrut = inputs.wStrut; % width of the struts (in pupil diameters)
 
-strut_width = strut_width*Dbeam; %--now in meters
+wStrut = wStrut*Dbeam; %--now in meters
 dx = Dbeam/Nbeam;
 
 % Centering of array: 'pixel' or 'interpixel'
@@ -86,37 +87,29 @@ yshift = 0;%inputs.yshift; % translation in y of pupil (in diameters)
 pad_strut = 0; %2*pad_strut_pct/100*diam; %--Convert to meters. Factor of 2x needed since strut is padded on both sides
 
 
-
 Dmask = Dbeam; % % width of the beam (so can have zero padding if LS is undersized) (meters)
 diam = Dmask;% width of the mask (meters)
-NapAcross = Dmask/dx; % minimum even number of points across to fully contain the actual aperture (if interpixel centered)
-if(strcmpi(centering,'pixel'))
-    Narray = 2*ceil(1/2*(Dmask/dx+1/2)); %--number of points across output array. Sometimes requires two more pixels when pixel centered.
-else
-    Narray = 2*ceil(1/2*Dmask/dx); %--number of points across output array. Same size as width when interpixel centered.
-end
-% NapAcross = 2*ceil(1/2*Dmask/dx); % minimum even number of points across to fully contain the actual aperture (if interpixel centered)
-% if(strcmpi(centering,'pixel'))
-%     Narray = NapAcross + 2; %--number of points across output array. Requires two more pixels when pixel centered.
-% else
-%     Narray = NapAcross; %--number of points across output array. Same size as width when interpixel centered.
-% end
 
+
+if(strcmpi(centering,'pixel'))
+    Narray = ceil_even(Nbeam+1); %--number of points across output array. Sometimes requires two more pixels when pixel centered.
+else
+    Narray = ceil_even(Nbeam); %--number of points across output array. Same size as width when interpixel centered.
+end
 Darray = Narray*dx; %--width of the output array (meters)
-bdf = 1; %--beam diameter factor in output array
+
+bdf = Nbeam/Narray; %--beam diameter factor in output array
 wl_dummy   = 1e-6;     % wavelength (m); Dummy value--no propagation here, so not used.
 
 switch centering % 0 shift for pixel-centered pupil, or -diam/Narray shift for inter-pixel centering
     case {'interpixel'}
-        cshift = -Darray/2/Narray; 
+        cshift = -dx/2; 
     case {'pixel'}
         cshift = 0;
         if(flagRot180deg)
-            cshift = -Darray/Narray;
+            cshift = -dx;
         end
 end
-
-% % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % %
 
 % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % % %
 
@@ -128,10 +121,10 @@ y0 = 20.25; % inches, pupil center in y in Visio file
 Dconv = (diam/D0); % conversion factor from inches and Visio units to meters 
 
 %--Nominal strut width in units of normalized diameters.
-% strut_width = 0.209*(diam/D0);
+% wStrut = 0.209*(diam/D0);
 
 %--INITIALIZE PROPER
-bm = prop_begin(Darray, wl_dummy, Narray,'beam_diam_fraction',bdf);
+bm = prop_begin(Dbeam, wl_dummy, Narray,'beam_diam_fraction',bdf);
 % figure(1); imagesc(abs(bm.wf)); axis xy equal tight; colorbar;
 
 %--PRIMARY MIRROR (OUTER DIAMETER)
@@ -166,7 +159,7 @@ bm = prop_circular_obscuration(bm, ra_ID,'cx',cx_ID,'cy',cy_ID);%, cx, cy, norm)
     %--STRUT 1
     rot_s1 = 77.56 + clock_deg; % degrees
     sx_s1 = magfacD*(3.6*(diam/D0) + pad_strut);
-    sy_s1 = magfacD*(strut_width + pad_strut);
+    sy_s1 = magfacD*(wStrut + pad_strut);
     cx_s1 = (-24.8566 - x0)*Dconv + cshift;
     cy_s1 = (22.2242 - y0)*Dconv + cshift;
     cxy1 = magfacD*[cosd(clock_deg), -sind(clock_deg); sind(clock_deg), cosd(clock_deg)]*([cx_s1; cy_s1] - cshift) + cshift;
@@ -179,7 +172,7 @@ bm = prop_circular_obscuration(bm, ra_ID,'cx',cx_ID,'cy',cy_ID);%, cx, cy, norm)
     %--STRUT 2
     rot_s2 = -17.56 + clock_deg; % degrees
     sx_s2 = magfacD*(3.6*(diam/D0) + pad_strut);
-    sy_s2 = magfacD*(strut_width + pad_strut);
+    sy_s2 = magfacD*(wStrut + pad_strut);
     cx_s2 = (-23.7187 - x0)*Dconv + cshift;
     cy_s2 = (20.2742 - y0)*Dconv + cshift;
     cxy2 = magfacD*[cosd(clock_deg), -sind(clock_deg); sind(clock_deg), cosd(clock_deg)]*([cx_s2; cy_s2] - cshift) + cshift;
@@ -192,7 +185,7 @@ bm = prop_circular_obscuration(bm, ra_ID,'cx',cx_ID,'cy',cy_ID);%, cx, cy, norm)
     %--STRUT 3
     rot_s3 = -42.44 + clock_deg; % degrees
     sx_s3 = magfacD*(3.6*(diam/D0) + pad_strut);
-    sy_s3 = magfacD*(strut_width + pad_strut);
+    sy_s3 = magfacD*(wStrut + pad_strut);
     cx_s3 = (-24.8566 - x0)*Dconv + cshift;
     cy_s3 = (18.2758 - y0)*Dconv + cshift;
     cxy3 = magfacD*[cosd(clock_deg), -sind(clock_deg); sind(clock_deg), cosd(clock_deg)]*([cx_s3; cy_s3] - cshift) + cshift;
@@ -205,7 +198,7 @@ bm = prop_circular_obscuration(bm, ra_ID,'cx',cx_ID,'cy',cy_ID);%, cx, cy, norm)
     %--STRUT 4
     rot_s4 = 42.44 + clock_deg; % degrees
     sx_s4 = magfacD*(3.6*(diam/D0) + pad_strut);
-    sy_s4 = magfacD*(strut_width + pad_strut);
+    sy_s4 = magfacD*(wStrut + pad_strut);
     cx_s4 = (-27.1434 - x0)*Dconv + cshift;
     cy_s4 = (18.2758 - y0)*Dconv + cshift;
     cxy4 = magfacD*[cosd(clock_deg), -sind(clock_deg); sind(clock_deg), cosd(clock_deg)]*([cx_s4; cy_s4] - cshift) + cshift;
@@ -217,7 +210,7 @@ bm = prop_circular_obscuration(bm, ra_ID,'cx',cx_ID,'cy',cy_ID);%, cx, cy, norm)
     %--STRUT 5
     rot_s5 = 17.56 + clock_deg; % degrees
     sx_s5 = magfacD*(3.6*(diam/D0) + pad_strut);
-    sy_s5 = magfacD*(strut_width + pad_strut);
+    sy_s5 = magfacD*(wStrut + pad_strut);
     cx_s5 = (-28.2813 - x0)*Dconv + cshift;
     cy_s5 = (20.2742 - y0)*Dconv + cshift;
     cxy5 = magfacD*[cosd(clock_deg), -sind(clock_deg); sind(clock_deg), cosd(clock_deg)]*([cx_s5; cy_s5] - cshift) + cshift;
@@ -229,7 +222,7 @@ bm = prop_circular_obscuration(bm, ra_ID,'cx',cx_ID,'cy',cy_ID);%, cx, cy, norm)
     %--STRUT 6
     rot_s6 = 102.44 + clock_deg; % degrees
     sx_s6 = magfacD*(3.6*(diam/D0) + pad_strut);
-    sy_s6 = magfacD*(strut_width + pad_strut);
+    sy_s6 = magfacD*(wStrut + pad_strut);
     cx_s6 = (-27.1434 - x0)*Dconv + cshift;
     cy_s6 = (22.2242 - y0)*Dconv + cshift;
     cxy6 = magfacD*[cosd(clock_deg), -sind(clock_deg); sind(clock_deg), cosd(clock_deg)]*([cx_s6; cy_s6] - cshift) + cshift;
@@ -249,12 +242,25 @@ end
 % figure(18); imagesc(mask); axis xy equal tight; colorbar;
 % figure(19); imagesc(mask-rot90(mask,2)); axis xy equal tight; colorbar;
 
+
 end %--END OF FUNCTION
 
 
 
 
-
+% %--DEBUGGING: Visually verify that mask is centered correctly
+% figure(11); imagesc(mask); axis xy equal tight; colorbar; drawnow;
+% switch centering 
+%     case {'pixel'}
+%         maskTemp = mask(2:end,2:end);
+%     otherwise
+%         maskTemp = mask;
+% end
+% figure(12); imagesc(maskTemp-fliplr(maskTemp)); axis xy equal tight; colorbar; 
+% title('Centering Check','Fontsize',20); set(gca,'Fontsize',20);
+% drawnow;
+% 
+% sum(sum(mask))
 
 
 
