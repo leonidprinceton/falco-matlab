@@ -20,29 +20,31 @@
 % - Modified from falco_get_hcst_sbp_image on 2019-03-22 by G. Ruane
 % - Created on 2019-03-22 by G. Ruane 
 
-
-function normI = falco_get_gpct_sbp_image(mp,si)
+function [normI,newV] = falco_get_gpct_sbp_image(mp,si)
 
     bench = mp.bench;
     sbp_width = bench.info.sbp_width(si); %--Width of each sub-bandpass on testbed (meters)
     sbp_texp  = bench.info.sbp_texp(si);% Exposure time for each sub-bandpass (seconds)
-    PSFpeak   = bench.info.PSFpeaks(si);
+    PSFpeak   = bench.info.PSFpeaks(si);% counts per second 
     
     %----- Send commands to the DM -----
-    disp('Sending current DM voltages to testbed') 
+    %disp('Sending current DM voltages to testbed') 
     
-    map = mp.dm1.V'; % There's a transpose between Matlab and BMC indexing
-    
+    [newV,message] = tb_DM_dmsmooth( bench, mp.dm1.V );
+
+
+    map = newV'; % There's a transpose between Matlab and DM indexing
+
     % Send the commands to the DM. 
     % Notes: bench.DM.flatmap contains the commands to flatten the DM. 
     %        mp.dm1.V is added to the flat commands inside tb_DM_apply2Dmap. 
     tb_DM_apply2Dmap(bench,map);
     
     %----- Get image from the testbed -----
-    disp(['Getting image from testbed in band',num2str(si)])
+    disp(['Getting image from testbed in band ',num2str(si)])
     
     % Set wavelength
-    disp(['Setting varia to bandpass',num2str(si)])
+    %disp(['Setting varia to bandpass',num2str(si)])
     lam0 = mp.sbp_centers(si);
     lam1 = lam0 - sbp_width/2;
     lam2 = lam0 + sbp_width/2;
@@ -57,4 +59,4 @@ function normI = falco_get_gpct_sbp_image(mp,si)
     % Get normalized intensity (dark subtracted and normalized by PSFpeak)
     normI = (tb_andor_getImage(bench,sbp_texp)-dark)/PSFpeak_counts; 
     
-end 
+end

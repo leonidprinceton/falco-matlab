@@ -14,14 +14,17 @@
 %
 %
 % REVISION HISTORY:
-% -Modified on 2018-07-24 to use Erkin's latest controller strategy.
-% -Modified on 2018-02-06 by A.J. Riggs to be parallelized with parfor.
+% - Modified on 2019-09-26 by A.J. Riggs to handle DM actuator constraints
+% outside this function in a more user-robust way.
+% - Modified on 2019-06-25 by A.J. Riggs to pass out tied actuator pairs. 
+% - Modified on 2018-07-24 to use Erkin's latest controller strategy.
+% - Modified on 2018-02-06 by A.J. Riggs to be parallelized with parfor.
 %   Required calling a new function. 
-% -Modified by A.J. Riggs on October 11, 2017 to allow easier mixing of
+% - Modified by A.J. Riggs on October 11, 2017 to allow easier mixing of
 %   which DMs are used and to also do a grid search over the gain of the 
 %   overall DM command. 
-% -Modified from hcil_ctrl_checkMuEmp.m by A.J. Riggs on August 31, 2016
-% -Created at Princeton on 19 Feb 2015 by A.J. Riggs
+% - Modified from hcil_ctrl_checkMuEmp.m by A.J. Riggs on August 31, 2016
+% - Created at Princeton on 19 Feb 2015 by A.J. Riggs
 
 function [dDM,cvar] = falco_ctrl_planned_EFC(mp, cvar)
 
@@ -51,6 +54,7 @@ function [dDM,cvar] = falco_ctrl_planned_EFC(mp, cvar)
         if(mp.flagParfor) %--Parallelized
             parfor ni = 1:Nvals
                 [Inorm_list(ni),dDM_temp] = falco_ctrl_EFC_base(ni,vals_list,mp,cvar);
+                %--delta voltage commands
                 if(any(mp.dm_ind==1)); dDM1V_store(:,:,ni) = dDM_temp.dDM1V; end
                 if(any(mp.dm_ind==2)); dDM2V_store(:,:,ni) = dDM_temp.dDM2V; end
                 if(any(mp.dm_ind==5)); dDM5V_store(:,:,ni) = dDM_temp.dDM5V; end
@@ -58,8 +62,9 @@ function [dDM,cvar] = falco_ctrl_planned_EFC(mp, cvar)
                 if(any(mp.dm_ind==9)); dDM9V_store(:,ni) = dDM_temp.dDM9V; end
             end
         else %--Not Parallelized
-            for ni = 1:Nvals
+            for ni = Nvals:-1:1
                 [Inorm_list(ni),dDM_temp] = falco_ctrl_EFC_base(ni,vals_list,mp,cvar);
+                %--delta voltage commands
                 if(any(mp.dm_ind==1)); dDM1V_store(:,:,ni) = dDM_temp.dDM1V; end
                 if(any(mp.dm_ind==2)); dDM2V_store(:,:,ni) = dDM_temp.dDM2V; end
                 if(any(mp.dm_ind==5)); dDM5V_store(:,:,ni) = dDM_temp.dDM5V; end
@@ -81,19 +86,19 @@ function [dDM,cvar] = falco_ctrl_planned_EFC(mp, cvar)
 
         %--Find the best scaling factor and Lagrange multiplier pair based on the best contrast.
         [cvar.cMin,indBest] = min(Inorm_list(:));
-       
         cvar.latestBestlog10reg = vals_list(1,indBest);
         cvar.latestBestDMfac = vals_list(2,indBest);
-        %cp.muBest(cvar.Itr) = vals_list(1,indBest);
-        %cp.dmfacBest(cvar.Itr) = vals_list(2,indBest);
-        fprintf('Empirical grid search gives log10reg, = %.1f,\t dmfac = %.2f\t   gives %4.2e contrast.\n',cvar.latestBestlog10reg,cvar.latestBestDMfac,cvar.cMin)
-
+        if(mp.ctrl.flagUseModel)
+            fprintf('Model-based grid search gives log10reg, = %.1f,\t dmfac = %.2f\t   gives %4.2e contrast.\n',cvar.latestBestlog10reg, cvar.latestBestDMfac, cvar.cMin)
+        else
+            fprintf('Empirical grid search gives log10reg, = %.1f,\t dmfac = %.2f\t   gives %4.2e contrast.\n',cvar.latestBestlog10reg, cvar.latestBestDMfac, cvar.cMin)
+        end
     end
     
     %% Skip steps 2 and 3 if the schedule for this iteration is just to use the "optimal" regularization AND if the grid search was performed this iteration
     
     if( (imag(mp.ctrl.log10regSchedIn(cvar.Itr)) ~= 0) && (real(mp.ctrl.log10regSchedIn(cvar.Itr)) == 0) && any(mp.gridSearchItrVec==cvar.Itr) )
-    
+        %--delta voltage commands
         if(any(mp.dm_ind==1)); dDM.dDM1V = dDM1V_store(:,:,indBest); end
         if(any(mp.dm_ind==2)); dDM.dDM2V = dDM2V_store(:,:,indBest); end
         if(any(mp.dm_ind==5)); dDM.dDM5V = dDM5V_store(:,:,indBest); end
@@ -109,9 +114,6 @@ function [dDM,cvar] = falco_ctrl_planned_EFC(mp, cvar)
         else
             log10regSchedOut = mp.ctrl.log10regSchedIn(cvar.Itr);
         end
-    %     fprintf('log10reg = %.1f \n',log10regSchedOut )
-    %     fprintf('mp.dm_ind = ['); for jj = 1:length(mp.dm_ind); fprintf(' %d',mp.dm_ind(jj)); end; fprintf(' ]\n');
-
 
         %% Step 3: Compute the EFC command to use.
         ni = 1;
@@ -121,12 +123,13 @@ function [dDM,cvar] = falco_ctrl_planned_EFC(mp, cvar)
         vals_list = [log10regSchedOut; cvar.latestBestDMfac];
         
         [cvar.cMin,dDM] = falco_ctrl_EFC_base(ni,vals_list,mp,cvar);
-        fprintf('Scheduled log10reg = %.1f\t gives %4.2e contrast.\n',log10regSchedOut,cvar.cMin)
-%         fprintf('Scheduled values of: \tlog10reg = %.1f,\t dmfac = %.2f\t   gives %4.2e contrast.\n',log10regSchedOut,cvar.latestBestDMfac,cvar.cMin)
-
+        if(mp.ctrl.flagUseModel)
+            fprintf('Model says scheduled log10reg = %.1f\t gives %4.2e contrast.\n',log10regSchedOut,cvar.cMin)
+        else
+            fprintf('Scheduled log10reg = %.1f\t gives %4.2e contrast.\n',log10regSchedOut,cvar.cMin)
+        end
     end
     
     cvar.log10regUsed = log10regSchedOut;
-    
-    
+       
 end %--END OF FUNCTION

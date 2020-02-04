@@ -4,14 +4,15 @@
 % at the California Institute of Technology.
 % -------------------------------------------------------------------------
 %
-% function jac = model_Jacobian_EHLC(mp, DM, tsi, whichDM)
+% function jac = model_Jacobian_EHLC(mp, im, whichDM)
 %--Wrapper for the simplified optical models used for the fast Jacobian calculation.
 %  The first-order derivative of the DM pokes are propagated through the system.
 %  Does not include unknown aberrations/errors that are in the full model.
-%  This function is for the extended hybrid Lyot coronagraph (EHLC).
+%  This function is for the extended-FPM hybrid Lyot coronagraph (EHLC).
 %
 % REVISION HISTORY:
 % --------------
+% Modified on 2018-04-22 by A.J. Riggs to use propcustom_relay.
 % Modified on 2018-08-10 by A.J. Riggs from HLC to EHLC.
 % Modified on 2017-11-13 by A.J. Riggs to be compatible with parfor.
 % Modified on 2017-11-09 by A.J. Riggs to compute only one row of the whole Jacobian. 
@@ -28,16 +29,13 @@
 %
 % INPUTS:
 % -mp = structure of model parameters
-% -DM = structure of DM settings
-% -tsi = index of the pair of sub-bandpass index and tip/tilt offset index
+% -im = index of the pair of sub-bandpass index and Zernike mode index
 % -whichDM = which DM number
 %
 % OUTPUTS:
-% -Gttlam = Jacobian for the specified DM and specified T/T-wavelength pair
-%
+% -Gzdl = Jacobian for the specified Zernike mode (z), DM (d), and sub-bandpass (l).
 
 function Gzdl = model_Jacobian_EHLC(mp, im, whichDM)
-% function Gzdl = model_Jacobian_HLC(mp, DM, modvar, cp, whichJacSet)
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Setup
@@ -45,9 +43,6 @@ function Gzdl = model_Jacobian_EHLC(mp, im, whichDM)
 
 modvar.sbpIndex = mp.jac.sbp_inds(im);
 modvar.zernIndex = mp.jac.zern_inds(im);
-indZernVec = find(mp.jac.zerns==modvar.zernIndex);
-% modvar.sbpIndex = mp.Wttlam_si(tsi);
-% modvar.ttIndex = mp.Wttlam_ti(tsi);
 
 lambda = mp.sbp_centers(modvar.sbpIndex); 
 mirrorFac = 2; % Phase change is twice the DM surface height.f
@@ -67,8 +62,7 @@ if(modvar.zernIndex~=1)
     indsZnoll = modvar.zernIndex; %--Just send in 1 Zernike mode
     zernMat = falco_gen_norm_zernike_maps(mp.P1.compact.Nbeam,mp.centering,indsZnoll); %--Cube of normalized (RMS = 1) Zernike modes.
     zernMat = padOrCropEven(zernMat,mp.P1.compact.Narr);
-    % figure(1); imagesc(zernMat); axis xy equal tight; colorbar; 
-    Ein = Ein.*zernMat*(2*pi*1i/lambda)*mp.jac.Zcoef(indZernVec);
+    Ein = Ein.*zernMat*(2*pi/lambda)*mp.jac.Zcoef(mp.jac.zerns==modvar.zernIndex);
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -77,13 +71,13 @@ end
 
 pupil = padOrCropEven(mp.P1.compact.mask,NdmPad);
 Ein = padOrCropEven(Ein,NdmPad);
-if(mp.flagApod)
-    apodRot180 = padOrCropEven( rot90(mp.P3.compact.mask,2), NdmPad );
-    if( strcmpi(mp.centering,'pixel') ); apodRot180 = circshift(apodRot180,[1 1]); end %--To undo center offset when pixel centered and rotating by 180 degrees.
+%--Re-image the apodizer from pupil P3 back to pupil P2. (Sign of mp.Nrelay2to3 doesn't matter.)
+if(mp.flagApod) 
+    apodReimaged = padOrCropEven(mp.P3.compact.mask, NdmPad);
+    apodReimaged = propcustom_relay(apodReimaged,mp.Nrelay2to3,mp.centering);
 else
-    apodRot180 = ones(NdmPad); 
+    apodReimaged = ones(NdmPad); 
 end
-
 
 if(mp.flagDM1stop); DM1stop = padOrCropEven(mp.dm1.compact.mask, NdmPad); else; DM1stop = ones(NdmPad); end
 if(mp.flagDM2stop); DM2stop = padOrCropEven(mp.dm2.compact.mask, NdmPad); else; DM2stop = ones(NdmPad); end
@@ -91,12 +85,6 @@ if(mp.flagDM2stop); DM2stop = padOrCropEven(mp.dm2.compact.mask, NdmPad); else; 
 if(any(mp.dm_ind==1)); DM1surf = padOrCropEven(mp.dm1.compact.surfM, NdmPad);  else; DM1surf = 0; end 
 if(any(mp.dm_ind==2)); DM2surf = padOrCropEven(mp.dm2.compact.surfM, NdmPad);  else; DM2surf = 0; end 
 FPM = squeeze(mp.FPMcube(:,:,modvar.sbpIndex)); %--Complex transmission of the FPM. Calculated in model_Jacobian.m.
-
-% %--Complex transmission of the points outside the FPM (just fused silica with neither dielectric nor metal). Needed for Babinet's principle only
-% ilam = modvar.sbpIndex; 
-% ind_metal = falco_discretize_FPM_surf(0, mp.t_metal_nm_vec, mp.dt_metal_nm); %--Obtain the indices of the nearest thickness values in the complex transmission datacube.
-% ind_diel = falco_discretize_FPM_surf(0, mp.t_diel_nm_vec,  mp.dt_diel_nm); %--Obtain the indices of the nearest thickness values in the complex transmission datacube.
-% transOuterFPM = mp.complexTransCompact(ind_diel,ind_metal,ilam); %--Complex transmission of the points outside the FPM (just fused silica with neither dielectric nor metal). Needed for Babinet's principle only
 
 if(mp.useGPU)
     pupil = gpuArray(pupil);
@@ -110,10 +98,14 @@ end
 
 %--Define pupil P1 and Propagate to pupil P2
 EP1 = pupil.*Ein; %--E-field at pupil plane P1
-EP2 = propcustom_2FT(EP1,mp.centering); %--Forward propagate to the next pupil plane (P2) by rotating 180 deg.
+EP2 = propcustom_relay(EP1,mp.Nrelay1to2,mp.centering); %--Forward propagate to the next pupil plane (P2) by rotating 180 degrees mp.Nrelay1to2 times.
 
 %--Propagate from P2 to DM1, and apply DM1 surface and aperture stop
-if( abs(mp.d_P2_dm1)~=0 ); Edm1 = propcustom_PTP(EP2,mp.P2.compact.dx*NdmPad,lambda,mp.d_P2_dm1); else; Edm1 = EP2; end  %--E-field arriving at DM1
+if( abs(mp.d_P2_dm1)~=0 ) 
+    Edm1 = propcustom_PTP(EP2,mp.P2.compact.dx*NdmPad,lambda,mp.d_P2_dm1); 
+else 
+    Edm1 = EP2; %--E-field arriving at DM1
+end
 Edm1 = DM1stop.*exp(mirrorFac*2*pi*1i*DM1surf/lambda).*Edm1; %--E-field leaving DM1
 
 %--DM1---------------------------------------------------------
@@ -122,13 +114,22 @@ if(whichDM==1)
     
     %--Two array sizes (at same resolution) of influence functions for MFT and angular spectrum
     Nbox1 = mp.dm1.compact.Nbox; %--Smaller array size for MFT to FPM after FFT-AS propagations from DM1->DM2->DM1
-    NboxPad1AS = mp.dm1.compact.NboxAS; %NboxPad1;%2.^ceil(log2(NboxPad1)); %--Power of 2 array size for FFT-AS propagations from DM1->DM2->DM1
+    NboxPad1AS = mp.dm1.compact.NboxAS; %--Power of 2 array size for FFT-AS propagations from DM1->DM2->DM1
     mp.dm1.compact.xy_box_lowerLeft_AS = mp.dm1.compact.xy_box_lowerLeft - (mp.dm1.compact.NboxAS-mp.dm1.compact.Nbox)/2; %--Adjust the sub-array location of the influence function for the added zero padding
 
-    if(any(mp.dm_ind==2)); DM2surf = padOrCropEven(DM2surf,mp.dm1.compact.NdmPad);  else; DM2surf = zeros(mp.dm1.compact.NdmPad); end 
-    if(mp.flagDM2stop); DM2stop = padOrCropEven(DM2stop,mp.dm1.compact.NdmPad); else; DM2stop = ones(mp.dm1.compact.NdmPad); end
-    apodRot180 = padOrCropEven( apodRot180, mp.dm1.compact.NdmPad);
-
+    if(any(mp.dm_ind==2)) 
+        DM2surf = padOrCropEven(DM2surf,mp.dm1.compact.NdmPad);
+    else 
+        DM2surf = zeros(mp.dm1.compact.NdmPad); 
+    end
+    
+    if(mp.flagDM2stop) 
+        DM2stop = padOrCropEven(DM2stop,mp.dm1.compact.NdmPad); 
+    else 
+        DM2stop = ones(mp.dm1.compact.NdmPad); 
+    end
+    
+    apodReimaged = padOrCropEven( apodReimaged, mp.dm1.compact.NdmPad);
     Edm1pad = padOrCropEven(Edm1,mp.dm1.compact.NdmPad); %--Pad or crop for expected sub-array indexing
 
     %--Propagate each actuator from DM1 through the optical system
@@ -155,42 +156,33 @@ if(whichDM==1)
             %--To simulate going forward to the next pupil plane (with the apodizer) most efficiently, 
             % First, back-propagate the apodizer (by rotating 180-degrees) to the previous pupil.
             % Second, negate the coordinates of the box used.
-            dEP2box = apodRot180(y_box_ind,x_box_ind).*dEP2box; %--Apply 180deg-rotated SP mask.
-            dEP3box = (1/1j)^2*rot90(dEP2box,2); %--Forward propagate the cropped box by rotating 180 degrees.
-            x_box = rot90(-x_box,2); %--Negate to effectively rotate by 180 degrees
-            y_box = rot90(-y_box,2); %--Negate to effectively rotate by 180 degrees
+            dEP2box = apodReimaged(y_box_AS_ind,x_box_AS_ind).*dEP2box; %--Apply 180deg-rotated SP mask.
+            dEP3box = rot90(dEP2box,2*mp.Nrelay2to3); %--Forward propagate the cropped box by rotating 180 degrees mp.Nrelay2to3 times.
+            x_box = (-1)^mp.Nrelay2to3*rot90(x_box,2*mp.Nrelay2to3); %--Negate and rotate coordinates to effectively rotate by 180 degrees. No change if 360 degree rotation.
+            y_box = (-1)^mp.Nrelay2to3*rot90(y_box,2*mp.Nrelay2to3); %--Negate and rotate coordinates to effectively rotate by 180 degrees. No change if 360 degree rotation.
            
             %--Matrices for the MFT from the pupil P3 to the focal plane mask
             rect_mat_pre = (exp(-2*pi*1j*(mp.F3.compact.etas*y_box)/(lambda*mp.fl)))...
-                *sqrt(mp.P2.compact.dx*mp.P2.compact.dx)*sqrt(mp.F3.compact.dxi*mp.F3.compact.deta)/(1j*lambda*mp.fl);
+                *sqrt(mp.P2.compact.dx*mp.P2.compact.dx)*sqrt(mp.F3.compact.dxi*mp.F3.compact.deta)/(lambda*mp.fl);
             rect_mat_post  = (exp(-2*pi*1j*(x_box*mp.F3.compact.xis)/(lambda*mp.fl)));
 
             %--MFT from pupil P3 to FPM
             EF3 = rect_mat_pre*dEP3box*rect_mat_post; % MFT to FPM
             EF3 = FPM.*EF3; %--Apply complex-valued FPM
-%             EF3 = (transOuterFPM-FPM).*EF3; %--Propagate through (1-complex FPM) for Babinet's principle
 
             %--MFT from FPM at F3 to Lyot stop at P4
-            EP4 = propcustom_mft_FtoP(EF3,mp.fl,lambda,mp.F3.compact.dxi,mp.F3.compact.deta,mp.P4.compact.dx,mp.P4.compact.Narr,mp.centering); 
+            EP4 = propcustom_mft_FtoP(EF3,mp.fl,lambda,mp.F3.compact.dxi,mp.F3.compact.deta,mp.P4.compact.dx,mp.P4.compact.Narr,mp.centering);
+            EP4 = propcustom_relay(EP4,mp.Nrelay3to4-1,mp.centering); %--Get the correct orientation
             EP4 = mp.P4.compact.croppedMask.*EP4; %--Apply Lyot stop
 
-%             %--DFT to LS ("Sub" name for Subtrahend part of the Lyot-plane E-field)
-%             EP4sub = propcustom_mft_FtoP(EF3,mp.fl,lambda,mp.F3.compact.dxi,mp.F3.compact.deta,mp.P4.compact.dx,mp.P4.compact.Narr,mp.centering);  %--Subtrahend term for the Lyot plane E-field    
-% 
-%             %--Full Lyot plane pupil (for Babinet)
-%             EP4noFPM = zeros(mp.dm1.compact.NdmPad);
-%             EP4noFPM(y_box_ind,x_box_ind) = dEP2box; %--Propagating the E-field from P2 to P4 without masks gives the same E-field. 
-%             EP4noFPM = padOrCropEven(EP4noFPM,mp.P4.compact.Narr);
-%             EP4 = mp.P4.compact.croppedMask.*(transOuterFPM*EP4noFPM - EP4sub); % Babinet's principle to get E-field at Lyot plane
-
-            % DFT to camera
+            %--MFT to final focal plane
+            EP4 = propcustom_relay(EP4,mp.NrelayFend,mp.centering); %--Rotate the final image 180 degrees if necessary
             EFend = propcustom_mft_PtoF(EP4,mp.fl,lambda,mp.P4.compact.dx,mp.Fend.dxi,mp.Fend.Nxi,mp.Fend.deta,mp.Fend.Neta,mp.centering);
 
             Gzdl(:,Gindex) = mp.dm1.weight*EFend(mp.Fend.corr.inds)/sqrt(mp.Fend.compact.I00(modvar.sbpIndex));
         end
         Gindex = Gindex + 1;
     end
-
 end    
 
 %--DM2---------------------------------------------------------
@@ -202,7 +194,7 @@ if(whichDM==2)
     NboxPad2AS = mp.dm2.compact.NboxAS; 
     mp.dm2.compact.xy_box_lowerLeft_AS = mp.dm2.compact.xy_box_lowerLeft - (NboxPad2AS-mp.dm2.compact.Nbox)/2; %--Account for the padding of the influence function boxes
     
-    apodRot180 = padOrCropEven( apodRot180, mp.dm2.compact.NdmPad);
+    apodReimaged = padOrCropEven( apodReimaged, mp.dm2.compact.NdmPad);
     DM2stop = padOrCropEven(DM2stop,mp.dm2.compact.NdmPad);
         
     %--Propagate full field to DM2 before back-propagating in small boxes
@@ -232,48 +224,34 @@ if(whichDM==2)
             %--To simulate going forward to the next pupil plane (with the apodizer) most efficiently, 
             % First, back-propagate the apodizer (by rotating 180-degrees) to the previous pupil.
             % Second, negate the coordinates of the box used.
-            dEP2box = apodRot180(y_box_ind,x_box_ind).*dEP2box; %--Apply 180deg-rotated SP mask.
-            dEP3box = (1/1j)^2*rot90(dEP2box,2); %--Forward propagate the cropped box by rotating 180 degrees.
-            x_box = rot90(-x_box,2); %--Negate to effectively rotate by 180 degrees
-            y_box = rot90(-y_box,2); %--Negate to effectively rotate by 180 degrees
+            dEP2box = apodReimaged(y_box_AS_ind,x_box_AS_ind).*dEP2box; %--Apply 180deg-rotated SP mask.
+            dEP3box = rot90(dEP2box,2*mp.Nrelay2to3); %--Forward propagate the cropped box by rotating 180 degrees mp.Nrelay2to3 times.
+            x_box = (-1)^mp.Nrelay2to3*rot90(x_box,2*mp.Nrelay2to3); %--Negate and rotate coordinates to effectively rotate by 180 degrees. No change if 360 degree rotation.
+            y_box = (-1)^mp.Nrelay2to3*rot90(y_box,2*mp.Nrelay2to3); %--Negate and rotate coordinates to effectively rotate by 180 degrees. No change if 360 degree rotation.
             
             %--Matrices for the MFT from the pupil P3 to the focal plane mask
             rect_mat_pre = (exp(-2*pi*1j*(mp.F3.compact.etas*y_box)/(lambda*mp.fl)))...
-                *sqrt(mp.P2.compact.dx*mp.P2.compact.dx)*sqrt(mp.F3.compact.dxi*mp.F3.compact.deta)/(1j*lambda*mp.fl);
+                *sqrt(mp.P2.compact.dx*mp.P2.compact.dx)*sqrt(mp.F3.compact.dxi*mp.F3.compact.deta)/(lambda*mp.fl);
             rect_mat_post  = (exp(-2*pi*1j*(x_box*mp.F3.compact.xis)/(lambda*mp.fl)));
-
 
             %--MFT from pupil P3 to FPM
             EF3 = rect_mat_pre*dEP3box*rect_mat_post; % MFT to FPM
             EF3 = FPM.*EF3; %--Apply complex-valued FPM
-%             dEP2box = padOrCropEven(dEP2box,Nbox2); %--Crop back down to make the MFT faster
-%             EF3 = rect_mat_pre*dEP3box*rect_mat_post; % MFT to FPM
-%             EF3 = (transOuterFPM-FPM).*EF3; %--Propagate through ( 1 - (complex FPM) ) for Babinet's principle
 
             %--MFT from FPM at F3 to Lyot stop at P4
-            EP4 = propcustom_mft_FtoP(EF3,mp.fl,lambda,mp.F3.compact.dxi,mp.F3.compact.deta,mp.P4.compact.dx,mp.P4.compact.Narr,mp.centering); 
+            EP4 = propcustom_mft_FtoP(EF3,mp.fl,lambda,mp.F3.compact.dxi,mp.F3.compact.deta,mp.P4.compact.dx,mp.P4.compact.Narr,mp.centering);
+            EP4 = propcustom_relay(EP4,mp.Nrelay3to4-1,mp.centering); %--Get the correct orientation
             EP4 = mp.P4.compact.croppedMask.*EP4; %--Apply Lyot stop
-            
-%             % DFT to LS ("Sub" name for Subtrahend part of the Lyot-plane E-field)
-%             EP4sub = propcustom_mft_FtoP(EF3,mp.fl,lambda,mp.F3.compact.dxi,mp.F3.compact.deta,mp.P4.compact.dx,mp.P4.compact.Narr,mp.centering);  %--Subtrahend term for the Lyot plane E-field    
-% 
-%             EP4noFPM = zeros(mp.dm2.compact.NdmPad);
-%             EP4noFPM(y_box_ind,x_box_ind) = dEP2box; %--Propagating the E-field from P2 to P4 without masks gives the same E-field.
-%             %EP4noFPM = (1/1j)^2*rot90(EP4noFPM,2); if( strcmpi(mp.centering,'pixel') ); EP4noFPM = circshift(EP4noFPM,[1 1]); end %--Re-image to next pupil plane. (1j)^2 comes from the coefficients of the 2 skipped MFTs
-%             EP4noFPM = padOrCropEven(EP4noFPM,mp.P4.compact.Narr);
-%             EP4 = mp.P4.compact.croppedMask.*(transOuterFPM*EP4noFPM - EP4sub); % Babinet's principle to get E-field at Lyot plane
 
-            % DFT to camera
+            %--MFT to final focal plane
+            EP4 = propcustom_relay(EP4,mp.NrelayFend,mp.centering); %--Rotate the final image 180 degrees if necessary
             EFend = propcustom_mft_PtoF(EP4,mp.fl,lambda,mp.P4.compact.dx,mp.Fend.dxi,mp.Fend.Nxi,mp.Fend.deta,mp.Fend.Neta,mp.centering);
 
             Gzdl(:,Gindex) = mp.dm2.weight*EFend(mp.Fend.corr.inds)/sqrt(mp.Fend.compact.I00(modvar.sbpIndex));
         end
         Gindex = Gindex + 1;
     end
-
 end
-
-
 
 %--DM8--------------------------------------------------------- 
 if(whichDM==8)
@@ -286,7 +264,6 @@ if(whichDM==8)
         stepFac = mp.dm8.stepFac;
     end
     
-    
     %--Propagate from DM1 to DM2, and apply DM2 surface and aperture stop
     Edm2 = DM2stop.*exp(mirrorFac*2*pi*1i*DM2surf/lambda).*propcustom_PTP(Edm1,mp.P2.compact.dx*NdmPad,lambda,mp.d_dm1_dm2); % Pre-compute the initial DM2 E-field
     
@@ -298,7 +275,7 @@ if(whichDM==8)
     end
     
     %--Rotate 180 degrees to propagate to pupil P3
-    EP3 = propcustom_2FT(EP2eff, mp.centering);
+    EP3 = propcustom_relay(EP2eff,mp.Nrelay2to3,mp.centering);
 
     %--Apply apodizer mask.
     if(mp.flagApod)
@@ -309,7 +286,6 @@ if(whichDM==8)
     EF3inc = padOrCropEven( propcustom_mft_PtoF(EP3, mp.fl,lambda,mp.P2.compact.dx,mp.F3.compact.dxi,mp.F3.compact.Nxi,mp.F3.compact.deta,mp.F3.compact.Neta,mp.centering), mp.dm8.compact.NdmPad);
     
     %--Coordinates for metal thickness and dielectric thickness
-%     DM8transIndAll = falco_discretize_FPM_surf(mp.dm8.surf, mp.t_metal_nm_vec, mp.dt_metal_nm); %--All of the mask
     DM9transIndAll = falco_discretize_FPM_surf(mp.dm9.surf, mp.t_diel_nm_vec, mp.dt_diel_nm); %--All of the mask
     DM9transIndAll = padOrCropEven(DM9transIndAll,mp.dm8.compact.NdmPad); %--Change to same size as DM8 surface in order to use same sub-array indexing
     FPMcrop8 = padOrCropEven(FPM,mp.dm8.compact.NdmPad);
@@ -332,46 +308,37 @@ if(whichDM==8)
             DM8transInd = falco_discretize_FPM_surf(DM8surfCropNew, mp.t_metal_nm_vec,  mp.dt_metal_nm);
             DM9transInd = DM9transIndAll(eta_box_ind,xi_box_ind); %--Cropped region of the FPM.
 
-            %             DM9surfCropNew = stepFac*mp.dm9.VtoH(iact).*mp.dm9.compact.inf_datacube(:,:,iact) + mp.dm9.surf(eta_box_ind,xi_box_ind); % New DM9 surface profile in the poked region (meters)
-%             DM9transInd = falco_discretize_FPM_surf(DM9surfCropNew, mp.t_diel_nm_vec,  mp.dt_diel_nm);
-%             DM8transInd = DM8transIndAll(eta_box_ind,xi_box_ind); %--Cropped region of the FPM.
-            
             %--Look up table to compute complex transmission coefficient of the FPM at each pixel
             FPMpoked = zeros(Neta, Nxi); %--Initialize output array of FPM's complex transmission    
             for ix = 1:Nxi
                 for iy = 1:Neta
                     ind_metal = DM8transInd(iy,ix);
                     ind_diel  = DM9transInd(iy,ix);
-                    %fprintf('\t%d\t%d\n',ind_metal,ind_diel)
                     FPMpoked(iy,ix) = mp.complexTransCompact(ind_diel,ind_metal,modvar.sbpIndex);
                 end
             end            
   
             dEF3box = ( FPMpoked - FPMcrop8(eta_box_ind,xi_box_ind) ).*EF3inc(eta_box_ind,xi_box_ind); % Delta field (in a small region) at the FPM
-%             dEF3box = ( (transOuterFPM-FPMpoked) - (transOuterFPM-FPM(eta_box_ind,xi_box_ind)) ).*EF3inc(eta_box_ind,xi_box_ind); % Delta field (in a small region) at the FPM. Extra subtractions included for Babinet's principle
 
             %--Matrices for the MFT from the FPM stamp to the Lyot stop
             rect_mat_pre = (exp(-2*pi*1j*(mp.P4.compact.ys*eta_box)/(lambda*mp.fl)))...
-                *sqrt(mp.P4.compact.dx*mp.P4.compact.dx)*sqrt(mp.F3.compact.dxi*mp.F3.compact.deta)/(1j*lambda*mp.fl);
+                *sqrt(mp.P4.compact.dx*mp.P4.compact.dx)*sqrt(mp.F3.compact.dxi*mp.F3.compact.deta)/(lambda*mp.fl);
             rect_mat_post  = (exp(-2*pi*1j*(xi_box*mp.P4.compact.xs)/(lambda*mp.fl)));
 
             %--DFT from FPM to Lyot stop
             EP4 = rect_mat_pre*dEF3box*rect_mat_post; % MFT from FPM (F3) to Lyot stop plane (P4).
-%             EP4 = 0 - rect_mat_pre*dEF3box*rect_mat_post; % MFT from FPM (F3) to Lyot stop plane (P4). Subtraction is for Babinet's principle
+            EP4 = propcustom_relay(EP4,mp.Nrelay3to4-1,mp.centering); %--Get the correct orientation
             EP4 = mp.P4.compact.croppedMask.*EP4; %--Apply Lyot stop
 
-            %--DFT to final focal plane
+            %--MFT to final focal plane
+            EP4 = propcustom_relay(EP4,mp.NrelayFend,mp.centering); %--Rotate the final image 180 degrees if necessary
             EFend = propcustom_mft_PtoF(EP4,mp.fl,lambda,mp.P4.compact.dx,mp.Fend.dxi,mp.Fend.Nxi,mp.Fend.deta,mp.Fend.Neta,mp.centering);
 
             Gzdl(:,Gindex) = mp.dm8.act_sens*(1/stepFac)*mp.dm8.weight*EFend(mp.Fend.corr.inds)/sqrt(mp.Fend.compact.I00(modvar.sbpIndex));
         end
         Gindex = Gindex + 1;
     end
-
-end %%%%%%%%%%%%%%%%%%%
-
-
-
+end
 
 %--DM9--------------------------------------------------------- 
 if(whichDM==9)
@@ -379,7 +346,7 @@ if(whichDM==9)
     Nbox9 = mp.dm9.compact.Nbox;
     
     if(isfield(mp.dm9,'stepFac')==false)
-        stepFac = 20;%10; %--Adjust the step size in the Jacobian, then divide back out. Used for helping counteract effect of discretization.
+        stepFac = 20; %--Adjust the step size in the Jacobian, then divide back out. Used for helping counteract effect of discretization.
     else
         stepFac = mp.dm9.stepFac;
     end
@@ -395,7 +362,7 @@ if(whichDM==9)
     end
     
     %--Rotate 180 degrees to propagate to pupil P3
-    EP3 = propcustom_2FT(EP2eff, mp.centering);
+    EP3 = propcustom_relay(EP2eff,mp.Nrelay2to3,mp.centering);
 
     %--Apply apodizer mask.
     if(mp.flagApod);  EP3 = mp.P3.compact.mask.*padOrCropEven(EP3, mp.P3.compact.Narr);  end
@@ -404,7 +371,6 @@ if(whichDM==9)
     EF3inc = padOrCropEven( propcustom_mft_PtoF(EP3, mp.fl,lambda,mp.P2.compact.dx,mp.F3.compact.dxi,mp.F3.compact.Nxi,mp.F3.compact.deta,mp.F3.compact.Neta,mp.centering), mp.dm9.compact.NdmPad);
     
     %--Coordinates for metal thickness and dielectric thickness
-%     [X,Y] = meshgrid(mp.t_metal_nm_vec,mp.t_diel_nm_vec); %--Grid for interpolation
     DM8transIndAll = falco_discretize_FPM_surf(mp.dm8.surf, mp.t_metal_nm_vec, mp.dt_metal_nm); %--All of the mask
     DM8transIndAll = padOrCropEven(DM8transIndAll,mp.dm9.compact.NdmPad); %--Change to same size as DM9 surface in order to use same sub-array indexing
     FPMcrop9 = padOrCropEven(FPM,mp.dm9.compact.NdmPad);
@@ -422,9 +388,6 @@ if(whichDM==9)
             %--Obtain values for the "poked" FPM's complex transmission (only in the sub-array where poked)
             Nxi = Nbox9;
             Neta = Nbox9;
-% %             DM8surfCropNM = DM8surfNM(eta_box_ind,xi_box_ind);
-%             DM9surfCropNew = stepFac*mp.dm9.VtoH(iact).*mp.dm9.compact.inf_datacube(:,:,iact) + mp.dm9.surf(eta_box_ind,xi_box_ind); % New DM9 surface profile in the poked region (meters)
-% %             DM9surfCropNewNM = round(1e9*DM9surfCropNew); %  meters -> discretized nanometers
             DM9surfCropNew = stepFac*mp.dm9.VtoH(iact).*mp.dm9.compact.inf_datacube(:,:,iact) + mp.dm9.surf(eta_box_ind,xi_box_ind); % New DM9 surface profile in the poked region (meters)
             DM9transInd = falco_discretize_FPM_surf(DM9surfCropNew, mp.t_diel_nm_vec,  mp.dt_diel_nm);
             DM8transInd = DM8transIndAll(eta_box_ind,xi_box_ind); %--Cropped region of the FPM.
@@ -435,55 +398,34 @@ if(whichDM==9)
                 for iy = 1:Neta
                     ind_metal = DM8transInd(iy,ix);
                     ind_diel  = DM9transInd(iy,ix);
-                    %fprintf('\t%d\t%d\n',ind_metal,ind_diel)
                     FPMpoked(iy,ix) = mp.complexTransCompact(ind_diel,ind_metal,modvar.sbpIndex);
                 end
             end            
             
-%             %--Interpolate (MORE ACCURATE, BUT MUCH SLOWER THAN LOOK-UP TABLE)
-%             DM8surfCrop = mp.dm8.surf(eta_box_ind,xi_box_ind);
-%             DM9surfCrop = mp.dm9.surf(eta_box_ind,xi_box_ind);
-%             FPMpoked = zeros(Neta, Nxi); %--Initialize output array of FPM's complex transmission
-%             for il=1:Nlam        
-%                 for ix = 1:Nxi
-%                     for iy = 1:Neta
-%                         DM9surfNew = mp.dm9.compact.inf_datacube(:,:,iact) + DM9surfCrop;
-%                         FPMpoked(iy,ix) = interp2(X, Y, squeeze(mp.complexTransCompact(:,:,modvar.sbpIndex)), DM8surfCrop(iy,ix), DM9surfNew(iy,ix));
-%                     end
-%                 end
-%             end
-            
-            
             dEF3box = ( FPMpoked - FPMcrop9(eta_box_ind,xi_box_ind) ).*EF3inc(eta_box_ind,xi_box_ind); % Delta field (in a small region) at the FPM
-%             dEF3box = ( (transOuterFPM-FPMpoked) - (transOuterFPM-FPM(eta_box_ind,xi_box_ind)) ).*EF3inc(eta_box_ind,xi_box_ind); % Delta field (in a small region) at the FPM. Extra subtractions included for Babinet's principle
 
             %--Matrices for the MFT from the FPM stamp to the Lyot stop
             rect_mat_pre = (exp(-2*pi*1j*(mp.P4.compact.ys*eta_box)/(lambda*mp.fl)))...
-                *sqrt(mp.P4.compact.dx*mp.P4.compact.dx)*sqrt(mp.F3.compact.dxi*mp.F3.compact.deta)/(1j*lambda*mp.fl);
+                *sqrt(mp.P4.compact.dx*mp.P4.compact.dx)*sqrt(mp.F3.compact.dxi*mp.F3.compact.deta)/(lambda*mp.fl);
             rect_mat_post  = (exp(-2*pi*1j*(xi_box*mp.P4.compact.xs)/(lambda*mp.fl)));
 
             %--MFT from FPM to Lyot stop (Nominal term transOuterFPM*EP4noFPM subtracts out to 0 since it ignores the FPM change).
             EP4 = rect_mat_pre*dEF3box*rect_mat_post; % MFT from FPM (F3) to Lyot stop plane (P4).
-%             EP4 = 0 - rect_mat_pre*dEF3box*rect_mat_post; % MFT from FPM (F3) to Lyot stop plane (P4). Subtraction for Babinet's principle
+            EP4 = propcustom_relay(EP4,mp.Nrelay3to4-1,mp.centering); %--Get the correct orientation
             EP4 = mp.P4.compact.croppedMask.*EP4; %--Apply Lyot stop
 
             %--MFT to final focal plane
+            EP4 = propcustom_relay(EP4,mp.NrelayFend,mp.centering); %--Rotate the final image 180 degrees if necessary
             EFend = propcustom_mft_PtoF(EP4,mp.fl,lambda,mp.P4.compact.dx,mp.Fend.dxi,mp.Fend.Nxi,mp.Fend.deta,mp.Fend.Neta,mp.centering);
 
             Gzdl(:,Gindex) = mp.dm9.act_sens*(1/stepFac)*mp.dm9.weight*EFend(mp.Fend.corr.inds)/sqrt(mp.Fend.compact.I00(modvar.sbpIndex));
         end
         Gindex = Gindex + 1;
     end
-
-end %%%%%%%%%%%%%%%%%%%
-
+end
 
 if(mp.useGPU)
     Gzdl = gather(Gzdl);
 end
 
-
 end %--END OF FUNCTION
-
-
-    

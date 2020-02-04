@@ -11,11 +11,10 @@ clear;
 
 %% Step 1: Define Necessary Paths on Your Computer System
 
-pathStem = '/Users/gruane/Desktop/SCDA/';
 
 %--Library locations
-mp.path.falco = [pathStem,'falco-matlab/'];  %--Location of FALCO
-mp.path.proper = [pathStem,'PROPER/'];  %--Location of FALCO; %--Location of the MATLAB PROPER library
+mp.path.falco = 'C:\CoronagraphSims\falco-matlab\';  %--Location of FALCO
+mp.path.proper = 'C:\CoronagraphSims\FALCO\lib\PROPER\'; %--Location of the MATLAB PROPER library
 
 %%--Output Data Directories (Comment these lines out to use defaults within falco-matlab/data/ directory.)
 mp.path.config = [mp.path.falco,'data/brief/']; %--Location of config files and minimal output files. Default is [mainPath filesep 'data' filesep 'brief' filesep]
@@ -27,7 +26,7 @@ addpath(genpath(mp.path.proper)) %--Add PROPER library to MATLAB path
 
 %% Step 2: Load default model parameters
 
-defaults_DST_LC_design
+EXAMPLE_defaults_DST_LC_design
 
 %% Step 3: Overwrite default values as desired
 
@@ -113,7 +112,7 @@ mp.P1.pistons = randn(1,numSegments)/100;% Segment piston in waves
 mp.P1.tiltxs  = randn(1,numSegments)/50;% %Tilts on segments in horiz direction (waves/apDia)
 mp.P1.tiltys  = randn(1,numSegments)/50;% %Tilts on segments in vert direction (waves/apDia)
 
-mp = falco_config_gen_chosen_pupil(mp);
+mp = falco_gen_chosen_pupil(mp);
 
 actual_phz1 = angle(mp.P1.compact.E(:,:,ceil(mp.Nsbp/2)));
 
@@ -127,7 +126,7 @@ mp.P1.pistons = mp.P1.pistons + randn(1,numSegments)/2000;% Segment piston in wa
 mp.P1.tiltxs  = mp.P1.tiltxs + randn(1,numSegments)/1000;% %Tilts on segments in horiz direction (waves/apDia)
 mp.P1.tiltys  = mp.P1.tiltys + randn(1,numSegments)/1000;% %Tilts on segments in vert direction (waves/apDia)
 
-mp = falco_config_gen_chosen_pupil(mp);
+mp = falco_gen_chosen_pupil(mp);
 
 actual_phz2 = angle(mp.P1.compact.E(:,:,ceil(mp.Nsbp/2)));
 

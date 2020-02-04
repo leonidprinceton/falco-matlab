@@ -26,6 +26,10 @@ mp.thput_radius = 0.7; %--photometric aperture radius [lambda_c/D]. Used ONLY fo
 mp.thput_eval_x = 6; % x location [lambda_c/D] in dark hole at which to evaluate throughput
 mp.thput_eval_y = 0; % y location [lambda_c/D] in dark hole at which to evaluate throughput
 
+%--Where to shift the source to compute the intensity normalization value.
+mp.source_x_offset_norm = 7;  % x location [lambda_c/D] in dark hole at which to compute intensity normalization
+mp.source_y_offset_norm = 0;  % y location [lambda_c/D] in dark hole at which to compute intensity normalization
+
 %% Bandwidth and Wavelength Specs
 
 mp.lambda0 = 575e-9;    %--Central wavelength of the whole spectral bandpass [meters]
@@ -52,13 +56,14 @@ mp.est.probe.axis = 'alternate';     % which axis to have the phase discontinuit
 mp.est.probe.gainFudge = 1;     % empirical fudge factor to make average probe amplitude match desired value.
 
 %--New variables for pairwise probing with a Kalman filter
-%  mp.est.ItrStartKF =  %Which correction iteration to start recursive estimate
-%  mp.est.tExp =
-%  mp.est.num_im =
-%  mp.readNoiseStd =
-%  mp.peakCountsPerPixPerSec =
-%  mp.est.Qcoef =
-%  mp.est.Rcoef =
+% mp.est.ItrStartKF = 2 %Which correction iteration to start recursive estimate
+% mp.est.tExp =
+% mp.est.num_im =
+% mp.readNoiseStd =
+% mp.peakCountsPerPixPerSec =
+% mp.est.Qcoef =
+% mp.est.Rcoef =
+% mp.est.Pcoef0 = 
 
 %% Wavefront Control: General
 
@@ -224,6 +229,7 @@ mp.P4.compact.Nbeam = 250;
 mp.Nrelay1to2 = 1;
 mp.Nrelay2to3 = 1;
 mp.Nrelay3to4 = 1;
+mp.NrelayFend = 0; %--How many times to rotate the final image by 180 degrees
 
 %% Optical Layout: Full Model 
 

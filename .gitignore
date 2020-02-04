@@ -36,13 +36,14 @@ data/configs/**
 data/DM/**
 data/figures/**
 data/images/**
-data/Jacobians/**
+data/jac/**
 data/logs/**
 data/maps/**
 data/ws/**
 data/ws_inprogress/**
 data/brief/**
 data/material/**
+data/frn/**
 
 !data/brief/placeholder.txt
 !data/material/placeholder.txt
@@ -50,11 +51,30 @@ data/material/**
 !data/DM/placeholder.txt
 !data/figures/placeholder.txt
 !data/images/placeholder.txt
-!data/Jacobians/placeholder.txt
+!data/jac/placeholder.txt
 !data/logs/placeholder.txt
 !data/maps/placeholder.txt
 !data/ws/placeholder.txt
 !data/ws_inprogress/placeholder.txt
+!data/frn/placeholder.txt
+
+FRN/**
+#wfirst_modeling/FRN/calculateFRN/*
+#wfirst_modeling/FRN/**
+#!wfirst_modeling/FRN/placeholder.txt
+
+#wfirst_modeling/FRN/*.m
+#!wfirst_modeling/FRN/EXAMPLE*
+#!data/frn/s_EB_IMG_NF_Band1/*
+
+eval/**
+!eval/placeholder.txt
+!eval/EXAMPLE_*
+!eval/falco_*
+
+
+
+
 #--Don't sync large-size mask image formats
 lib/masks/**/*.fits
 **/*.bmp
@@ -85,6 +105,7 @@ zEXTRA/**
 main/**
 !main/TEMPLATE*
 !main/EXAMPLE_*
+!main/falco_*
 
 #--Sync only example config (defaults) files
 config/**
@@ -143,6 +164,21 @@ docs/**
 !**/*.placeholder.txt
 
 
+
+
+
+HLCLSplotter.m
+PMGIplotter.m
+*.mat
+*.pyc
+*.asv
+*.emf
+*.fig
+*.pdf
+*.png
+
+
+!lib/masks/**/*.png
 
 
 
